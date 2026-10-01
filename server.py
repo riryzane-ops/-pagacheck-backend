@@ -74,7 +74,7 @@ async def photo(u,c):
         except: pass
 async def text(u,c): await u.message.reply_text("Sono pronto. 📎 Mandami una foto o un PDF della busta paga.")
 
-bot.add_handler(CommandHandler("start",start)); bot.add_handler(CommandHandler("help",help_cmd)); bot.add_handler(MessageHandler(filters.CallbackQuery.ALL,callback)); bot.add_handler(MessageHandler(filters.Document.ALL,doc)); bot.add_handler(MessageHandler(filters.PHOTO,photo)); bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,text))
+bot.add_handler(CommandHandler("start",start)); bot.add_handler(CommandHandler("help",help_cmd)); bot.add_handler(MessageHandler(filters.CallbackQuery.ALL,callback)); bot.add_handler(MessageHandler(filters.Document.ALL,doc)); bot.add_handler(MessageHandler(filters.PHOTO,photo)); bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,text)) 
 @app.get("/health",response_class=PlainTextResponse)
 async def health(): return "PagaCheck OK"
 @app.get("/")

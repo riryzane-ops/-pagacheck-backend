@@ -81,7 +81,7 @@ async def health(): return "PagaCheck OK"
 async def home(): return FileResponse("PagaCheck_V1_2.html")
 @app.post(f"/telegram/{WEBHOOK_SECRET}")
 async def webhook(request:Request):
-    u=Update.de_json(await request.json(),bot.bot); await bot.process_update(u); return {"ok":True}
+   u=Update.de_json(await request.json(),bot); await bot.process_update(u) 
 @app.on_event("startup")
 async def startup():
     await bot.initialize(); await bot.start()

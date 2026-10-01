@@ -59,7 +59,7 @@ async def doc(u,c):
     td=Path(tempfile.mkdtemp()); p=td/("cedolino"+s)
     try:
         f=await d.get_file(); await f.download_to_drive(str(p)); await process(u,p)
-    except Exception: await u.message.reply_text("⚠️ Problema tecnico durante la lettura. Riprova con il documento originale.")
+    except Exception as e: await u.message.reply_text(f"⚠️ Errore tecnico: {type(e).__name__}: {e}")
     finally:
         try: p.unlink(); td.rmdir()
         except: pass

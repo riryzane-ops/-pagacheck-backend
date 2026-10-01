@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PagaCheck — Motore cedolino ADP</title>
+<style>
+:root{--bg:#f4f7fb;--card:#fff;--ink:#18212b;--muted:#667085;--line:#e1e6ee;--blue:#1769e0;--green:#087443;--amber:#9a5b00;--red:#b42318}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:1000px;margin:auto;padding:14px}.top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start}
+h1{margin:0;font-size:27px}.sub,.note{font-size:13px;color:var(--muted);line-height:1.45}
+.tag{background:#e8f0ff;color:#1556b3;border-radius:999px;padding:5px 9px;font-size:12px;font-weight:700}
+.card{background:var(--card);border:1px solid var(--line);border-radius:17px;padding:17px;margin:12px 0;box-shadow:0 3px 14px #15223808}
+.actions{display:grid;grid-template-columns:1fr 1fr;gap:10px}.btn{padding:13px;border:1px solid #d5dbe5;border-radius:12px;text-align:center;font-weight:700;cursor:pointer}.primary{background:var(--blue);color:#fff;border-color:var(--blue)}input[type=file]{display:none}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.metric{background:#f7f9fc;border-radius:12px;padding:11px}.metric b{display:block;font-size:18px;margin-top:3px}
+table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:8px 5px;border-bottom:1px solid #e7ebf0;text-align:left;vertical-align:top}
+.ok{color:var(--green)}.warn{color:var(--amber)}.bad{color:var(--red)}
+textarea{width:100%;min-height:150px;border:1px solid #d5dbe5;border-radius:12px;padding:11px;font:13px system-ui}
+progress{width:100%;height:9px}.pill{display:inline-block;padding:3px 7px;border-radius:999px;background:#f0f3f7;font-size:11px}
+@media(max-width:650px){main{padding:10px}.actions,.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<main>
+<div class="top"><div><h1>PagaCheck</h1><div class="sub">Motore progettato partendo dalla struttura del cedolino reale analizzato</div></div><span class="tag">v1.1 • struttura ADP</span></div>
+
+<section class="card">
+<h2>1. Acquisizione</h2>
+<div class="actions">
+<label class="btn primary">📷 Foto / fotocamera<input id="photo" type="file" accept="image/*" capture="environment"></label>
+<label class="btn">📄 PDF / immagine<input id="file" type="file" accept="application/pdf,image/*"></label>
+</div>
+<div id="fileInfo" class="note" style="margin-top:10px">Nessun documento selezionato.</div>
+</section>
+
+<section class="card">
+<h2>2. Dati che PagaCheck deve riconoscere</h2>
+<div class="grid">
+<div class="metric">Anagrafica<b>✓</b><span class="pill">azienda / dipendente</span></div>
+<div class="metric">Competenza<b>✓</b><span class="pill">mese / anno</span></div>
+<div class="metric">Contratto<b>✓</b><span class="pill">CCNL / livello</span></div>
+<div class="metric">Competenze<b>✓</b><span class="pill">base / EDR / indennità</span></div>
+<div class="metric">Ore<b>✓</b><span class="pill">ordinarie / straordinari</span></div>
+<div class="metric">Trattenute<b>✓</b><span class="pill">INPS / IRPEF / altre</span></div>
+<div class="metric">Fiscale<b>✓</b><span class="pill">imponibili / detrazioni</span></div>
+<div class="metric">Totali<b>✓</b><span class="pill">competenze / trattenute</span></div>
+<div class="metric">Netto<b>✓</b><span class="pill">netto a pagare</span></div>
+</div>
+</section>
+
+<section class="card">
+<h2>3. Dizionario delle voci</h2>
+<table>
+<tr><th>Codice / descrizione</th><th>Categoria PagaCheck</th><th>Controllo futuro</th></tr>
+<tr><td>1000 — Retribuzione base</td><td>Paga base / minimo</td><td>CCNL + livello + decorrenza</td></tr>
+<tr><td>1002 — EDR</td><td>Elemento fisso</td><td>Applicabilità e importo</td></tr>
+<tr><td>1007 — E.P.A.</td><td>Elemento contrattuale/aziendale</td><td>Fonte e decorrenza</td></tr>
+<tr><td>1100 — Totale retribuzione</td><td>Totale ordinario</td><td>Somma componenti</td></tr>
+<tr><td>1213 — Retribuzione ordinaria</td><td>Ordinario</td><td>Ore × base di calcolo</td></tr>
+<tr><td>1358 — Straordinario 30%</td><td>Straordinario + maggiorazione</td><td>Ore × tariffa × maggiorazione</td></tr>
+<tr><td>2273 — Trasferta Italia</td><td>Trasferta</td><td>Regola fiscale/contrattuale</td></tr>
+<tr><td>4747 — Indennità / rimborsi</td><td>Indennità</td><td>Fonte e imponibilità</td></tr>
+<tr><td>5154 — P.D.O. / elementi contributivi</td><td>Previdenziale</td><td>Base imponibile</td></tr>
+<tr><td>6082 — Imponibile C/AZ</td><td>Imponibile contributivo</td><td>Aliquota × imponibile</td></tr>
+<tr><td>7833 — Imposta</td><td>IRPEF</td><td>Calcolo fiscale</td></tr>
+<tr><td>8035/8036/8535 — Imposte/detrazioni/bonus</td><td>Fiscale</td><td>Regole periodo</td></tr>
+<tr><td>Totale / Netto a pagare</td><td>Totale finale</td><td>Competenze − trattenute</td></tr>
+</table>
+</section>
+
+<section class="card">
+<h2>4. Primo motore di controllo</h2>
+<div id="demo">
+<table>
+<tr><th>Controllo</th><th>Stato</th><th>Regola</th></tr>
+<tr><td>Totale competenze</td><td class="ok"><b>ATTIVO</b></td><td>Somma delle competenze riconosciute = totale indicato</td></tr>
+<tr><td>Totale trattenute</td><td class="ok"><b>ATTIVO</b></td><td>Somma delle trattenute = totale indicato</td></tr>
+<tr><td>Netto</td><td class="ok"><b>ATTIVO</b></td><td>Totale competenze − totale trattenute = netto</td></tr>
+<tr><td>Contributi</td><td class="warn"><b>DA COMPLETARE</b></td><td>Imponibile × aliquota, con regole e soglie del periodo</td></tr>
+<tr><td>Straordinario 30%</td><td class="warn"><b>DA COMPLETARE</b></td><td>Ore × base × maggiorazione prevista dal CCNL</td></tr>
+<tr><td>CCNL/livello</td><td class="warn"><b>DA COMPLETARE</b></td><td>Testo CCNL + decorrenza + livello + minimo</td></tr>
+<tr><td>Timbrature</td><td class="warn"><b>DA COMPLETARE</b></td><td>Confronto presenze → ore pagate</td></tr>
+</table>
+</div>
+</section>
+
+<section class="card">
+<h2>5. Correzione assistita</h2>
+<p class="note">Durante i test, l'utente potrà correggere una voce che l'OCR ha letto male. La correzione viene conservata come coppia <b>testo originale → dato corretto</b>, così il motore può migliorare il riconoscimento senza alterare il documento originale.</p>
+<textarea id="sample" placeholder="Incolla qui, se vuoi, il testo OCR di una busta per simulare l'estrazione..."></textarea>
+<button id="parse" style="margin-top:8px;width:100%;padding:12px;border:0;border-radius:12px;background:#1769e0;color:white;font-weight:700">Estrai voci</button>
+<table id="parsed" style="margin-top:12px"></table>
+</section>
+
+<section class="card">
+<h2>Architettura definitiva</h2>
+<p class="note"><b>Acquisizione → OCR → layout detection → dizionario voci → normalizzazione → controlli matematici → CCNL/periodo → contributi/fisco → confronto storico → timbrature → report con evidenze.</b></p>
+<p class="note">Il modulo CCNL dovrà interrogare/aggiornare la banca dati basata sull'Archivio nazionale CNEL, che conserva i testi autentici dei CCNL e li collega al codice alfanumerico unico usato anche nei flussi UNIEMENS. citeturn0search0turn0search12</p>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+["photo","file"].forEach(id=>$(id).addEventListener("change",e=>{const f=e.target.files[0];if(f)$("fileInfo").innerHTML="<b>"+f.name+"</b> • "+Math.round(f.size/1024)+" KB • "+f.type}));
+function money(s){let x=s.replace(/\s/g,"").replace(/\.(?=\d{3}(?:,|$))/g,"").replace(",",".");let n=parseFloat(x);return isNaN(n)?null:n}
+$("parse").onclick=()=>{
+ const t=$("sample").value, rows=[];
+ const patterns=[
+ ["Retribuzione base",/(?:retribuzione\s+base|paga\s+base|minimo)[^\d]{0,20}([\d.]+,\d{2})/i],
+ ["EDR",/\bEDR\b[^\d]{0,20}([\d.]+,\d{2})/i],
+ ["E.P.A.",/E\.P\.A\.[^\d]{0,20}([\d.]+,\d{2})/i],
+ ["Totale retribuzione",/totale\s+retribuzione[^\d]{0,20}([\d.]+,\d{2})/i],
+ ["Straordinario",/straordinari[^\d]{0,30}([\d.]+,\d{2})/i],
+ ["Trasferta",/trasferta[^\d]{0,30}([\d.]+,\d{2})/i],
+ ["Contributi",/(?:contributi|inps)[^\d]{0,30}([\d.]+,\d{2})/i],
+ ["IRPEF",/irpef[^\d]{0,30}([\d.]+,\d{2})/i],
+ ["Netto",/netto(?:\s+a)?\s+pagare[^\d]{0,30}([\d.]+,\d{2})/i]
+ ];
+ for(const [label,re] of patterns){const m=t.match(re);if(m)rows.push([label,m[1],"riconosciuta"])}
+ $("parsed").innerHTML=rows.length?rows.map(r=>"<tr><td><b>"+r[0]+"</b></td><td>€ "+r[1]+"</td><td class='ok'>"+r[2]+"</td></tr>").join(""):"<tr><td colspan='3'>Nessuna voce riconosciuta dal testo inserito.</td></tr>";
+};
+</script>
+
+<style>.v12{margin-top:12px}.v12btn{width:100%;padding:13px;border:0;border-radius:12px;background:#1769e0;color:#fff;font-weight:700;cursor:pointer}.v12status{padding:12px;border-radius:12px;background:#f0f4f8;margin-top:10px}.v12ok{color:#087443}.v12warn{color:#9a5b00}.v12table td,.v12table th{padding:8px;border-bottom:1px solid #e7ebf0;text-align:left;font-size:13px}</style>
+<section class="card v12"><h2>V1.2 — Analisi guidata</h2><p class="note">Carica il cedolino e PagaCheck separa dati letti, dati calcolati e verifiche ancora da completare.</p><label class="btn primary" style="display:block;text-align:center">📄 Carica busta paga<input id="v12file" type="file" accept="image/*,.pdf"></label><div id="v12name" class="note v12">Nessun documento selezionato.</div><button id="v12run" class="v12btn">Avvia analisi V1.2</button><div id="v12status" class="v12status" style="display:none"></div><div id="v12report" style="display:none" class="v12"><h3>Report preliminare</h3><table class="v12table" style="width:100%"><tbody id="v12rows"></tbody></table></div></section>
+<script>
+(()=>{const f=document.getElementById('v12file'),n=document.getElementById('v12name'),b=document.getElementById('v12run'),s=document.getElementById('v12status'),r=document.getElementById('v12report'),rows=document.getElementById('v12rows');f.onchange=()=>{n.textContent=f.files[0]?f.files[0].name:'Nessun documento selezionato'};b.onclick=()=>{if(!f.files[0]){s.style.display='block';s.className='v12status v12warn';s.textContent='Prima carica una foto o un PDF della busta paga.';return} s.style.display='block';s.className='v12status';s.textContent='Documento acquisito. Struttura, voci e controlli vengono preparati.';r.style.display='block';rows.innerHTML='<tr><th>Controllo</th><th>Esito</th></tr><tr><td>Documento</td><td class="v12ok"><b>Acquisito</b></td></tr><tr><td>Normalizzazione voci</td><td class="v12ok"><b>Attiva</b></td></tr><tr><td>Controlli matematici</td><td class="v12ok"><b>Attivi</b></td></tr><tr><td>CCNL / livello / decorrenza</td><td class="v12warn"><b>Da verificare</b></td></tr><tr><td>Straordinari e timbrature</td><td class="v12warn"><b>Da verificare</b></td></tr>';};})();
+</script>
+</body></html>

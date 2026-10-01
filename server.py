@@ -74,14 +74,19 @@ async def photo(u,c):
         except: pass
 async def text(u,c): await u.message.reply_text("Sono pronto. 📎 Mandami una foto o un PDF della busta paga.")
 
-bot.add_handler(CallbackQueryHandler(callback)) 
+bot.add_handler(CommandHandler("start",start))
+bot.add_handler(CommandHandler("help",help_cmd))
+bot.add_handler(MessageHandler(filters.Document.ALL,doc))
+bot.add_handler(MessageHandler(filters.PHOTO,photo))
+bot.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,text))
+bot.add_handler(CallbackQueryHandler(callback))
 @app.get("/health",response_class=PlainTextResponse)
 async def health(): return "PagaCheck OK"
 @app.get("/")
 async def home(): return FileResponse("PagaCheck_V1_2.html")
 @app.post(f"/telegram/{WEBHOOK_SECRET}")
 async def webhook(request:Request):
-   u=Update.de_json(await request.json(),bot); await bot.process_update(u) 
+   u=Update.de_json(await request.json(),bot.bot); await bot.process_update(u)
 @app.on_event("startup")
 async def startup():
     await bot.initialize(); await bot.start()

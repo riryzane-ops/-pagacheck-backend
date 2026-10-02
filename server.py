@@ -14,7 +14,7 @@ WEBHOOK_SECRET=os.environ.get("WEBHOOK_SECRET","pagacheck-webhook")
 PORT=int(os.environ.get("PORT","10000"))
 app=FastAPI(title="PagaCheck Backend",version="1.2")
 bot=Application.builder().token(BOT_TOKEN).build()
-
+PROCESSED_UPDATES=set()
 PATTERNS=[
 ("Retribuzione base",r"(?:retribuzione\s+base|paga\s+base|minimo)[^\d]{0,20}([\d.]+,\d{2})"),
 ("EDR",r"\bEDR\b[^\d]{0,20}([\d.]+,\d{2})"),

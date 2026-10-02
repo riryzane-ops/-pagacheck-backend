@@ -260,7 +260,7 @@ async def download_with_retry(file_id, destination, attempts=3):
             if destination.exists() and destination.stat().st_size > 0:
                 return
 
-            last_error = RuntimeError("Il file scaricato Ã¨ vuoto.")
+            last_error = RuntimeError("Il file scaricato e' vuoto.")
 
         except (NetworkError, TimedOut) as error:
             last_error = error
@@ -279,13 +279,13 @@ async def download_with_retry(file_id, destination, attempts=3):
 
 async def start(update, context):
     await update.message.reply_text(
-        "ð Benvenuto in PagaCheck V1.4.\n\n"
-        "ð Inviami una foto o un PDF della busta paga.\n\n"
-        "â ï¸ Controllo preliminare: non sostituisce una verifica professionale.",
+        "Benvenuto in PagaCheck V1.4.1.\n\n"
+        "Inviami una foto o un PDF della busta paga.\n\n"
+        "Controllo preliminare: non sostituisce una verifica professionale.",
         reply_markup=InlineKeyboardMarkup(
             [[
                 InlineKeyboardButton(
-                    "ð Invia busta paga",
+                    "Invia busta paga",
                     callback_data="upload",
                 )
             ]]
@@ -302,7 +302,7 @@ async def help_cmd(update, context):
 async def callback(update, context):
     await update.callback_query.answer()
     await update.callback_query.message.reply_text(
-        "Perfetto. ð Inviami qui la foto o il PDF della busta paga."
+        "Perfetto. Inviami qui la foto o il PDF della busta paga."
     )
 
 
@@ -312,35 +312,35 @@ async def process(update, path):
 
         if not rows:
             await update.message.reply_text(
-                "ð Documento ricevuto, ma non ho riconosciuto "
+                "Documento ricevuto, ma non ho riconosciuto "
                 "abbastanza voci.\n\n"
-                "Prova con un'immagine piÃ¹ nitida oppure "
+                "Prova con un'immagine piu' nitida oppure "
                 "con il PDF originale."
             )
             return
 
         message = [
-            "â PagaCheck â prima lettura completata",
+            "PagaCheck - prima lettura completata",
             f"Metodo: {method}",
             "",
             "Voci riconosciute:",
         ]
 
         message += [
-            f"â¢ {label}: â¬ {value}"
+            f"- {label}: EUR {value}"
             for label, value in rows
         ]
 
         if notes:
-            message += ["", "ð Controlli preliminari:"]
-            message += [f"â¢ {note}" for note in notes]
+            message += ["", "Controlli preliminari:"]
+            message += [f"- {note}" for note in notes]
 
         message += [
             "",
-            "ð Il controllo CCNL e la verifica completa "
+            "Il controllo CCNL e la verifica completa "
             "delle anomalie sono il livello successivo.",
             "",
-            "â ï¸ I dati letti non certificano da soli "
+            "I dati letti non certificano da soli "
             "un errore nella busta paga.",
         ]
 
@@ -348,7 +348,7 @@ async def process(update, path):
 
     except Exception:
         await update.message.reply_text(
-            "â ï¸ Ho ricevuto il documento, ma si Ã¨ verificato "
+            "Ho ricevuto il documento, ma si e' verificato "
             "un problema durante l'analisi.\n\n"
             "Prova nuovamente tra qualche secondo."
         )
@@ -377,11 +377,11 @@ async def doc(update, context):
 
     if document.file_size and document.file_size > MAX_FILE_SIZE:
         await update.message.reply_text(
-            "â ï¸ Il file supera il limite di 20 MB."
+            "Il file supera il limite di 20 MB."
         )
         return
 
-    await update.message.reply_text("ð¥ Ricevuto. Analizzoâ¦")
+    await update.message.reply_text("Ricevuto. Analizzo...")
 
     temp_dir = Path(tempfile.mkdtemp())
     path = temp_dir / f"cedolino{extension}"
@@ -396,15 +396,15 @@ async def doc(update, context):
 
     except (NetworkError, TimedOut):
         await update.message.reply_text(
-            "â ï¸ La connessione con Telegram si Ã¨ interrotta "
+            "La connessione con Telegram si e' interrotta "
             "durante il download.\n\n"
-            "Ho giÃ  effettuato piÃ¹ tentativi automatici. "
+            "Ho gia' effettuato piu' tentativi automatici. "
             "Riprova inviando nuovamente il documento."
         )
 
     except Exception:
         await update.message.reply_text(
-            "â ï¸ Non riesco a leggere il documento.\n\n"
+            "Non riesco a leggere il documento.\n\n"
             "Prova a inviarlo nuovamente."
         )
 
@@ -418,7 +418,9 @@ async def doc(update, context):
 
 
 async def photo(update, context):
-    await update.message.reply_text("ð¥ Foto ricevuta. Avvio OCRâ¦")
+    await update.message.reply_text(
+        "Foto ricevuta. Avvio OCR..."
+    )
 
     temp_dir = Path(tempfile.mkdtemp())
     path = temp_dir / "cedolino.jpg"
@@ -435,15 +437,15 @@ async def photo(update, context):
 
     except (NetworkError, TimedOut):
         await update.message.reply_text(
-            "â ï¸ La connessione con Telegram si Ã¨ interrotta "
+            "La connessione con Telegram si e' interrotta "
             "durante il download.\n\n"
             "Riprova a inviare la foto."
         )
 
     except Exception:
         await update.message.reply_text(
-            "â ï¸ Non riesco a leggere la foto.\n\n"
-            "Prova con una foto piÃ¹ nitida e ben illuminata."
+            "Non riesco a leggere la foto.\n\n"
+            "Prova con una foto piu' nitida e ben illuminata."
         )
 
     finally:
@@ -457,7 +459,7 @@ async def photo(update, context):
 
 async def text(update, context):
     await update.message.reply_text(
-        "Sono pronto. ð Mandami una foto o un PDF della busta paga."
+        "Sono pronto. Mandami una foto o un PDF della busta paga."
     )
 
 
@@ -500,7 +502,7 @@ async def lifespan(app_instance):
 
 app = FastAPI(
     title="PagaCheck Backend",
-    version="1.4",
+    version="1.4.1",
     lifespan=lifespan,
 )
 

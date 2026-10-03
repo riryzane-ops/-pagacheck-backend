@@ -39,6 +39,11 @@ WEB_FILE = os.environ.get("WEB_FILE", "PagaCheck_V1_4_1_web.html")
 
 MAX_FILE_SIZE = 20 * 1024 * 1024
 PROCESSED_UPDATES = set()
+MANUAL_INPUT_STATE = {}
+
+# Limiti OCR: evitano che Tesseract possa bloccare indefinitamente il bot.
+OCR_PAGE_TIMEOUT = 30
+OCR_DOCUMENT_TIMEOUT = 180
 
 
 # ============================================================
@@ -259,30 +264,103 @@ def first_match(patterns, text):
     return ""
 
 
+def _valid_date(value):
+    value = (value or "").strip()
+    for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%y", "%d-%m-%y", "%d.%m.%y"):
+        try:
+            return datetime.strptime(value, fmt).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+    return ""
+
+
+def _level_candidate(value):
+    value = re.sub(r"^[\s:;,.\-]+|[\s:;,.\-]+$", "", value or "")
+    # Prendiamo solo livelli con forme realistiche (3, 4S, G1, 1S, Q, ecc.).
+    match = re.search(r"(?<![A-Za-z0-9])((?:[A-Z]\d{1,2}[A-Z]?|\d{1,2}[A-Z]?|[A-Z]{1,3}))(?![A-Za-z0-9])", value, re.I)
+    return match.group(1).upper() if match else ""
+
+
+def _label_value(lines, labels, max_next=1):
+    for i, raw in enumerate(lines):
+        line = raw.strip()
+        if not line:
+            continue
+        for label in labels:
+            match = re.search(label + r"(?:\s*[:\-]\s*|\s+)(.*)$", line, re.I)
+            if match:
+                value = match.group(1).strip(" \t:-")
+                if value:
+                    return value
+                for nxt in lines[i + 1:i + 1 + max_next]:
+                    nxt = nxt.strip()
+                    if nxt:
+                        return nxt
+    return ""
+
+
 def extract_contract(text):
     t = clean_ocr_text(text)
+    lines = [line.strip() for line in t.splitlines() if line.strip()]
+
+    # CCNL: accettiamo solo righe che dichiarano esplicitamente il contratto.
+    ccnl = _label_value(lines, [
+        r"CCNL(?:\s+applicato)?",
+        r"contratto\s+collettivo(?:\s+nazionale)?",
+    ])
+    # Evita falsi positivi OCR del tipo "fermo in ogni caso il diritto al".
+    if ccnl and (len(ccnl) < 4 or re.search(r"\b(?:fermo|diritto|spettanza|resta|rimane|comunque)\b", ccnl, re.I)):
+        ccnl = ""
+
+    # Livello: cerca il valore subito dopo l'etichetta, ma valida il formato.
+    level = ""
+    for i, line in enumerate(lines):
+        if not re.search(r"\b(?:livello|liv\.)\b", line, re.I):
+            continue
+        candidate = re.sub(r"^.*?\b(?:livello|liv\.)\b", "", line, flags=re.I).strip(" :;-\t")
+        level = _level_candidate(candidate)
+        if not level and i + 1 < len(lines):
+            level = _level_candidate(lines[i + 1])
+        if level:
+            break
+
+    role = _label_value(lines, [r"qualifica(?:\s+professionale)?", r"mansione"], max_next=1)
+    if role:
+        role = role[:250].strip()
+
+    start = ""
+    for i, line in enumerate(lines):
+        if re.search(r"\bdata\s+di\s+assunzione\b", line, re.I) or re.search(r"\bassunzione\b", line, re.I):
+            candidates = re.findall(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", line)
+            if not candidates and i + 1 < len(lines):
+                candidates = re.findall(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", lines[i + 1])
+            if candidates:
+                start = _valid_date(candidates[0])
+            if start:
+                break
+
+    hours = _label_value(lines, [r"orario(?:\s+di\s+lavoro)?", r"ore\s+settimanali"], max_next=1)
+    if hours and not re.search(r"\d{1,2}(?:[,.]\d+)?\s*(?:ore|h|settiman|\%)|tempo\s+pieno|part[- ]time", hours, re.I):
+        hours = ""
+
+    level_date = ""
+    for i, line in enumerate(lines):
+        if re.search(r"\bdecorrenza\b", line, re.I) and re.search(r"\blivello\b", line, re.I):
+            candidates = re.findall(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", line)
+            if not candidates and i + 1 < len(lines):
+                candidates = re.findall(r"\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b", lines[i + 1])
+            if candidates:
+                level_date = _valid_date(candidates[0])
+            if level_date:
+                break
+
     return {
-        "ccnl": first_match([
-            r"CCNL[^\n:]*[:\-]\s*([^\n]+)",
-            r"contratto collettivo[^\n:]*[:\-]\s*([^\n]+)",
-        ], t),
-        "level": first_match([
-            r"(?:livello|liv\.)[^\n:]{0,15}[:\-]?\s*([A-Za-z0-9 .-]{1,12})",
-        ], t),
-        "role": first_match([
-            r"qualifica[^\n:]*[:\-]\s*([^\n]+)",
-            r"mansione[^\n:]*[:\-]\s*([^\n]+)",
-        ], t),
-        "start": first_match([
-            r"data di assunzione[^\n:]*[:\-]\s*([0-9./-]+)",
-            r"assunzione[^\n:]*[:\-]\s*([0-9./-]+)",
-        ], t),
-        "hours": first_match([
-            r"(?:orario|ore settimanali)[^\n:]*[:\-]\s*([^\n]+)",
-        ], t),
-        "levelDate": first_match([
-            r"decorrenza[^\n:]*livello[^\n:]*[:\-]\s*([0-9./-]+)",
-        ], t),
+        "ccnl": ccnl,
+        "level": level,
+        "role": role,
+        "start": start,
+        "hours": hours,
+        "levelDate": level_date,
     }
 
 
@@ -309,25 +387,37 @@ def extract_slip(text):
     }
 
 
+class OCRTimeout(RuntimeError):
+    """Tesseract ha superato il tempo massimo consentito."""
+
+
+def _run_tesseract(image):
+    try:
+        return pytesseract.image_to_string(
+            image,
+            lang="ita+eng",
+            config="--psm 6",
+            timeout=OCR_PAGE_TIMEOUT,
+        )
+    except RuntimeError as exc:
+        # pytesseract usa RuntimeError per il timeout del processo Tesseract.
+        if "timeout" in str(exc).lower():
+            raise OCRTimeout("OCR timeout") from exc
+        raise
+
+
 def ocr_image(path):
     with Image.open(path) as image:
         image = image.convert("RGB")
         image = ImageEnhance.Contrast(image).enhance(1.5)
         image = ImageEnhance.Sharpness(image).enhance(1.4)
         image = image.filter(ImageFilter.SHARPEN)
-        text = pytesseract.image_to_string(image, lang="ita+eng", config="--psm 6")
+        text = _run_tesseract(image)
     return clean_ocr_text(text)
 
 
 def ocr_pdf_pages(path, page_texts):
-    """
-    OCR di fallback per PDF scansionati.
-
-    Il PDF viene valutato pagina per pagina: se una pagina contiene testo
-    sufficiente usiamo il testo nativo; se Ã¨ sostanzialmente un'immagine,
-    la renderizziamo e la passiamo a Tesseract. In questo modo funzionano
-    anche PDF misti (alcune pagine digitali + alcune scansioni).
-    """
+    """OCR di fallback pagina per pagina con timeout per pagina."""
     ocr_texts = []
     used_ocr = False
 
@@ -336,8 +426,6 @@ def ocr_pdf_pages(path, page_texts):
         for index, page in enumerate(pdf):
             native = clean_ocr_text(page_texts[index] if index < len(page_texts) else "")
 
-            # Una pagina con pochissimo testo viene considerata potenzialmente
-            # scansionata. Evitiamo OCR inutile sulle pagine giÃ  leggibili.
             if len(re.sub(r"\s+", "", native)) >= 80:
                 ocr_texts.append(native)
                 continue
@@ -349,9 +437,7 @@ def ocr_pdf_pages(path, page_texts):
             image = ImageEnhance.Contrast(image).enhance(1.5)
             image = ImageEnhance.Sharpness(image).enhance(1.4)
             image = image.filter(ImageFilter.SHARPEN)
-            ocr = pytesseract.image_to_string(
-                image, lang="ita+eng", config="--psm 6"
-            )
+            ocr = _run_tesseract(image)
             ocr_texts.append(clean_ocr_text(ocr))
             used_ocr = True
     finally:
@@ -543,6 +629,27 @@ def old_consistency_notes(rows):
 
 
 # ============================================================
+# INSERIMENTO MANUALE DATI CONTRATTUALI
+# ============================================================
+def update_contract_fields(uid, updates):
+    profile = get_profile(uid)
+    if not profile or not profile.get("contract"):
+        contract = {"fields": {}, "source_pages": 0}
+    else:
+        contract = profile["contract"]
+        contract.setdefault("fields", {})
+    contract["fields"].update(updates)
+    save_contract(uid, contract, status="pending_confirmation")
+    return contract
+
+
+def manual_input_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("âï¸ Inserisci CCNL e livello", callback_data="manual_contract")],
+    ])
+
+
+# ============================================================
 # TELEGRAM
 # ============================================================
 async def download_with_retry(file_id, destination, attempts=3):
@@ -630,6 +737,17 @@ async def profile_cmd(update, context):
     await update.message.reply_text("\n".join(lines))
 
 
+async def manual_cmd(update, context):
+    ensure_user(update.effective_user)
+    uid = update.effective_user.id
+    MANUAL_INPUT_STATE[uid] = "ccnl"
+    await update.message.reply_text(
+        "âï¸ Inserimento manuale del profilo contrattuale.\n\n"
+        "Scrivi il nome del **CCNL di riferimento** (es. il nome del contratto collettivo).",
+        parse_mode="Markdown",
+    )
+
+
 async def confirm_cmd(update, context):
     ensure_user(update.effective_user)
     profile = get_profile(update.effective_user.id)
@@ -649,6 +767,14 @@ async def callback(update, context):
     data = update.callback_query.data
     if data == "contract":
         await update.callback_query.message.reply_text("\U0001F4C4 Inviami il PDF o una foto del contratto individuale.")
+    elif data == "manual_contract":
+        uid = update.effective_user.id
+        MANUAL_INPUT_STATE[uid] = "ccnl"
+        await update.callback_query.message.reply_text(
+            "âï¸ Inserimento manuale.\n\n"
+            "Scrivi il nome del **CCNL di riferimento**.",
+            parse_mode="Markdown",
+        )
     elif data == "slip":
         await update.callback_query.message.reply_text("\U0001F4B6 Inviami il cedolino. Se Ã¨ un PDF di piÃ¹ pagine, mandalo come unico file.")
     elif data == "profile":
@@ -671,7 +797,13 @@ async def process_document(update, path):
     uid = update.effective_user.id
     profile = get_profile(uid) or {"status": "missing", "contract": None}
 
-    text, pages, method = read_document(path)
+    try:
+        text, pages, method = await asyncio.wait_for(
+            asyncio.to_thread(read_document, path),
+            timeout=OCR_DOCUMENT_TIMEOUT,
+        )
+    except asyncio.TimeoutError as exc:
+        raise OCRTimeout("Analisi documento oltre il limite massimo") from exc
     if not text.strip():
         await update.message.reply_text(
             "\u26AA Documento ricevuto, ma non Ã¨ stato possibile estrarre testo. "
@@ -703,8 +835,13 @@ async def process_document(update, path):
             "\U0001F7E1 Prima di usare questi dati per controllare i cedolini, verifica che siano corretti.",
             "Se sono corretti: /conferma",
             "Se qualcosa non torna: non confermare ancora.",
+            "",
+            "Se CCNL o livello non sono stati riconosciuti correttamente, puoi inserirli manualmente.",
         ]
-        await update.message.reply_text("\n".join(lines))
+        await update.message.reply_text(
+            "\n".join(lines),
+            reply_markup=manual_input_keyboard(),
+        )
         return
 
     if doc_type == "unknown":
@@ -780,6 +917,11 @@ async def document(update, context):
     try:
         await download_with_retry(doc.file_id, path, attempts=3)
         await process_document(update, path)
+    except OCRTimeout:
+        await update.message.reply_text(
+            "â±ï¸ Lâanalisi OCR del documento ha superato il tempo massimo.\n\n"
+            "Il documento non Ã¨ stato salvato come contratto/cedolino perchÃ© non voglio usare dati incompleti. Riprova con il PDF originale oppure con pagine piÃ¹ nitide."
+        )
     except (NetworkError, TimedOut):
         await update.message.reply_text(
             "La connessione con Telegram si Ã¨ interrotta durante il download.\n\n"
@@ -805,6 +947,11 @@ async def photo(update, context):
     try:
         await download_with_retry(update.message.photo[-1].file_id, path, attempts=3)
         await process_document(update, path)
+    except OCRTimeout:
+        await update.message.reply_text(
+            "â±ï¸ Lâanalisi OCR della foto ha superato il tempo massimo.\n\n"
+            "La foto non Ã¨ stata salvata perchÃ© non voglio usare dati incompleti. Riprova con una foto piÃ¹ nitida."
+        )
     except (NetworkError, TimedOut):
         await update.message.reply_text(
             "La connessione con Telegram si Ã¨ interrotta durante il download. Riprova a inviare la foto."
@@ -824,9 +971,44 @@ async def photo(update, context):
 
 async def text_message(update, context):
     ensure_user(update.effective_user)
+    uid = update.effective_user.id
+    state = MANUAL_INPUT_STATE.get(uid)
+    message_text = (update.message.text or "").strip()
+
+    if state == "ccnl":
+        if len(message_text) < 3:
+            await update.message.reply_text("Il nome del CCNL Ã¨ troppo breve. Scrivilo per esteso e riprova.")
+            return
+        update_contract_fields(uid, {"ccnl": message_text})
+        MANUAL_INPUT_STATE[uid] = "level"
+        await update.message.reply_text(
+            "â CCNL inserito.\n\n"
+            "Ora scrivi il **livello di inquadramento** (es. 3, 4, 6, G1, ecc.).",
+            parse_mode="Markdown",
+        )
+        return
+
+    if state == "level":
+        # Manteniamo l'inserimento manuale semplice ma rifiutiamo testi palesemente non riconducibili a un livello.
+        if not re.fullmatch(r"[A-Za-z]?\s*\d{1,2}[A-Za-z]?|[A-Za-z]{1,4}", message_text):
+            await update.message.reply_text(
+                "Non riconosco questo formato come livello di inquadramento.\n\n"
+                "Esempi validi: 3, 4, 6, 1S, G1. Riprova."
+            )
+            return
+        update_contract_fields(uid, {"level": message_text.upper().replace(" ", "")})
+        MANUAL_INPUT_STATE.pop(uid, None)
+        await update.message.reply_text(
+            "â Livello inserito.\n\n"
+            "Il CCNL e il livello manuali sono ora memorizzati come dati del profilo **da confermare**.\n"
+            "Controllali con /profilo e, se sono corretti, usa /conferma.",
+            parse_mode="Markdown",
+        )
+        return
+
     await update.message.reply_text(
-        "Sono pronto. \U0001F4C4 Inviami prima il contratto individuale; poi potrai inviare i cedolini.\n\n"
-        "Comandi utili: /profilo e /conferma"
+        "Sono pronto. ð Inviami prima il contratto individuale; poi potrai inviare i cedolini.\n\n"
+        "Comandi utili: /profilo, /manuale e /conferma"
     )
 
 
@@ -837,6 +1019,7 @@ bot = Application.builder().token(BOT_TOKEN).build()
 bot.add_handler(CommandHandler("start", start))
 bot.add_handler(CommandHandler("help", help_cmd))
 bot.add_handler(CommandHandler("profilo", profile_cmd))
+bot.add_handler(CommandHandler("manuale", manual_cmd))
 bot.add_handler(CommandHandler("conferma", confirm_cmd))
 bot.add_handler(MessageHandler(filters.Document.ALL, document))
 bot.add_handler(MessageHandler(filters.PHOTO, photo))
@@ -869,7 +1052,7 @@ async def lifespan(app_instance):
 
 app = FastAPI(
     title="PagaCheck Backend",
-    version="1.5.1",
+    version="1.5.2",
     lifespan=lifespan,
 )
 

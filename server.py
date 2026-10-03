@@ -24,6 +24,7 @@ from telegram.error import NetworkError, TimedOut
 import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter
 from pypdf import PdfReader
+import fitz  # PyMuPDF: rendering di pagine PDF per OCR fallback
 
 
 # ============================================================
@@ -318,11 +319,65 @@ def ocr_image(path):
     return clean_ocr_text(text)
 
 
+def ocr_pdf_pages(path, page_texts):
+    """
+    OCR di fallback per PDF scansionati.
+
+    Il PDF viene valutato pagina per pagina: se una pagina contiene testo
+    sufficiente usiamo il testo nativo; se Ã¨ sostanzialmente un'immagine,
+    la renderizziamo e la passiamo a Tesseract. In questo modo funzionano
+    anche PDF misti (alcune pagine digitali + alcune scansioni).
+    """
+    ocr_texts = []
+    used_ocr = False
+
+    pdf = fitz.open(str(path))
+    try:
+        for index, page in enumerate(pdf):
+            native = clean_ocr_text(page_texts[index] if index < len(page_texts) else "")
+
+            # Una pagina con pochissimo testo viene considerata potenzialmente
+            # scansionata. Evitiamo OCR inutile sulle pagine giÃ  leggibili.
+            if len(re.sub(r"\s+", "", native)) >= 80:
+                ocr_texts.append(native)
+                continue
+
+            matrix = fitz.Matrix(2.5, 2.5)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            mode = "RGB" if pix.n == 3 else "RGBA"
+            image = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
+            image = ImageEnhance.Contrast(image).enhance(1.5)
+            image = ImageEnhance.Sharpness(image).enhance(1.4)
+            image = image.filter(ImageFilter.SHARPEN)
+            ocr = pytesseract.image_to_string(
+                image, lang="ita+eng", config="--psm 6"
+            )
+            ocr_texts.append(clean_ocr_text(ocr))
+            used_ocr = True
+    finally:
+        pdf.close()
+
+    return "\n\n".join(x for x in ocr_texts if x), used_ocr
+
+
 def read_document(path):
     if path.suffix.lower() == ".pdf":
         reader = PdfReader(str(path))
-        text = "\n".join((page.extract_text() or "") for page in reader.pages)
-        return clean_ocr_text(text), len(reader.pages), "testo PDF"
+        page_texts = [(page.extract_text() or "") for page in reader.pages]
+        native_text = clean_ocr_text("\n".join(page_texts))
+
+        # Prima proviamo sempre il testo nativo. Se Ã¨ una scansione,
+        # facciamo automaticamente OCR senza chiedere all'utente di
+        # trasformare ogni pagina in una foto.
+        if len(re.sub(r"\s+", "", native_text)) >= 150:
+            return native_text, len(page_texts), "testo PDF"
+
+        text, used_ocr = ocr_pdf_pages(path, page_texts)
+        if text.strip():
+            return text, len(page_texts), "testo PDF + OCR" if native_text else "OCR PDF"
+
+        return native_text, len(page_texts), "testo PDF"
+
     return ocr_image(path), 1, "OCR foto"
 
 
@@ -527,15 +582,15 @@ async def start(update, context):
     slip_count = count_slips(update.effective_user.id)
     contract_state = "presente" if profile and profile.get("contract") else "mancante"
     await update.message.reply_text(
-        "ð Benvenuto in PagaCheck.\n\n"
+        "\U0001F44B Benvenuto in PagaCheck.\n\n"
         "Prima costruiamo il profilo dal contratto individuale. Poi analizziamo i cedolini mese per mese.\n\n"
-        f"ð Contratto: {contract_state}\n"
-        f"ð¶ Cedolini acquisiti: {slip_count}\n\n"
+        f"\U0001F4C4 Contratto: {contract_state}\n"
+        f"\U0001F4B6 Cedolini acquisiti: {slip_count}\n\n"
         "Invia prima il contratto oppure usa i pulsanti qui sotto.",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("ð Carica contratto", callback_data="contract")],
-            [InlineKeyboardButton("ð¶ Carica cedolino", callback_data="slip")],
-            [InlineKeyboardButton("ð¤ Mostra profilo", callback_data="profile")],
+            [InlineKeyboardButton("\U0001F4C4 Carica contratto", callback_data="contract")],
+            [InlineKeyboardButton("\U0001F4B6 Carica cedolino", callback_data="slip")],
+            [InlineKeyboardButton("\U0001F464 Mostra profilo", callback_data="profile")],
         ]),
     )
 
@@ -560,7 +615,7 @@ async def profile_cmd(update, context):
         return
     fields = profile["contract"].get("fields", {})
     lines = [
-        "ð¤ Profilo PagaCheck",
+        "\U0001F464 Profilo PagaCheck",
         f"Stato: {'confermato' if profile['status'] == 'confirmed' else 'da confermare'}",
         "",
         f"CCNL: {fields.get('ccnl') or 'non riconosciuto'}",
@@ -571,7 +626,7 @@ async def profile_cmd(update, context):
         f"Decorrenza livello: {fields.get('levelDate') or 'non riconosciuta'}",
     ]
     if profile["status"] != "confirmed":
-        lines += ["", "ð¡ Se i dati sono corretti, usa /conferma."]
+        lines += ["", "\U0001F7E1 Se i dati sono corretti, usa /conferma."]
     await update.message.reply_text("\n".join(lines))
 
 
@@ -583,7 +638,7 @@ async def confirm_cmd(update, context):
         return
     confirm_profile(update.effective_user.id)
     await update.message.reply_text(
-        "â Profilo confermato.\n\n"
+        "\u2705 Profilo confermato.\n\n"
         "Da questo momento il contratto confermato viene usato come base del confronto. "
         "Il livello scritto sul cedolino non viene considerato automaticamente corretto: viene confrontato con il profilo e con le decorrenze disponibili."
     )
@@ -593,9 +648,9 @@ async def callback(update, context):
     await update.callback_query.answer()
     data = update.callback_query.data
     if data == "contract":
-        await update.callback_query.message.reply_text("ð Inviami il PDF o una foto del contratto individuale.")
+        await update.callback_query.message.reply_text("\U0001F4C4 Inviami il PDF o una foto del contratto individuale.")
     elif data == "slip":
-        await update.callback_query.message.reply_text("ð¶ Inviami il cedolino. Se Ã¨ un PDF di piÃ¹ pagine, mandalo come unico file.")
+        await update.callback_query.message.reply_text("\U0001F4B6 Inviami il cedolino. Se Ã¨ un PDF di piÃ¹ pagine, mandalo come unico file.")
     elif data == "profile":
         profile = get_profile(update.effective_user.id)
         if not profile or not profile.get("contract"):
@@ -603,7 +658,7 @@ async def callback(update, context):
         else:
             fields = profile["contract"].get("fields", {})
             await update.callback_query.message.reply_text(
-                "ð¤ Profilo: " + ("confermato" if profile["status"] == "confirmed" else "da confermare") + "\n\n"
+                "\U0001F464 Profilo: " + ("confermato" if profile["status"] == "confirmed" else "da confermare") + "\n\n"
                 f"CCNL: {fields.get('ccnl') or 'non riconosciuto'}\n"
                 f"Livello: {fields.get('level') or 'non riconosciuto'}\n"
                 f"Qualifica/mansione: {fields.get('role') or 'non riconosciuta'}\n\n"
@@ -619,7 +674,7 @@ async def process_document(update, path):
     text, pages, method = read_document(path)
     if not text.strip():
         await update.message.reply_text(
-            "âª Documento ricevuto, ma non Ã¨ stato possibile estrarre testo. "
+            "\u26AA Documento ricevuto, ma non Ã¨ stato possibile estrarre testo. "
             "Se Ã¨ un PDF scansione, prova con una foto nitida delle pagine."
         )
         return
@@ -632,7 +687,7 @@ async def process_document(update, path):
         save_contract(uid, contract, status="pending_confirmation")
 
         lines = [
-            "ð Contratto acquisito",
+            "\U0001F4C4 Contratto acquisito",
             "",
             f"Pagine: {pages}",
             f"Metodo: {method}",
@@ -645,7 +700,7 @@ async def process_document(update, path):
             f"â¢ Orario: {fields.get('hours') or 'non riconosciuto'}",
             f"â¢ Decorrenza livello: {fields.get('levelDate') or 'non riconosciuta'}",
             "",
-            "ð¡ Prima di usare questi dati per controllare i cedolini, verifica che siano corretti.",
+            "\U0001F7E1 Prima di usare questi dati per controllare i cedolini, verifica che siano corretti.",
             "Se sono corretti: /conferma",
             "Se qualcosa non torna: non confermare ancora.",
         ]
@@ -654,7 +709,7 @@ async def process_document(update, path):
 
     if doc_type == "unknown":
         await update.message.reply_text(
-            "âª Non riesco a stabilire con sufficiente sicurezza se questo documento sia un contratto o un cedolino.\n\n"
+            "\u26AA Non riesco a stabilire con sufficiente sicurezza se questo documento sia un contratto o un cedolino.\n\n"
             "Invia il contratto individuale oppure il cedolino in PDF originale/foto nitida."
         )
         return
@@ -667,7 +722,7 @@ async def process_document(update, path):
     save_slip(uid, slip, pages, method, states)
 
     lines = [
-        "ð¶ PagaCheck â cedolino acquisito",
+        "\U0001F4B6 PagaCheck \u2014 cedolino acquisito",
         f"Pagine: {pages}",
         f"Metodo: {method}",
         "",
@@ -696,9 +751,9 @@ async def process_document(update, path):
         lines += [f"â¢ {note}" for note in notes]
 
     lines += ["", "Esito dei controlli:"]
-    icons = {"green": "ð¢", "yellow": "ð¡", "red": "ð´", "white": "âª"}
+    icons = {"green": "\U0001F7E2", "yellow": "\U0001F7E1", "red": "\U0001F534", "white": "\u26AA"}
     for state in states:
-        lines.append(f"{icons.get(state['state'], 'âª')} {state['control']}: {state['title']}")
+        lines.append(f"{icons.get(state['state'], '\u26AA')} {state['control']}: {state['title']}")
         lines.append(f"   {state['explanation']}")
 
     lines += [
@@ -719,7 +774,7 @@ async def document(update, context):
         await update.message.reply_text("Il file supera il limite di 20 MB.")
         return
 
-    await update.message.reply_text("ð¥ Documento ricevuto. Analizzoâ¦")
+    await update.message.reply_text("\U0001F4E5 Documento ricevuto. Analizzo\u2026")
     temp_dir = Path(tempfile.mkdtemp())
     path = temp_dir / f"documento{extension}"
     try:
@@ -744,7 +799,7 @@ async def document(update, context):
 
 
 async def photo(update, context):
-    await update.message.reply_text("ð¥ Foto ricevuta. Avvio OCRâ¦")
+    await update.message.reply_text("\U0001F4E5 Foto ricevuta. Avvio OCR\u2026")
     temp_dir = Path(tempfile.mkdtemp())
     path = temp_dir / "documento.jpg"
     try:
@@ -770,7 +825,7 @@ async def photo(update, context):
 async def text_message(update, context):
     ensure_user(update.effective_user)
     await update.message.reply_text(
-        "Sono pronto. ð Inviami prima il contratto individuale; poi potrai inviare i cedolini.\n\n"
+        "Sono pronto. \U0001F4C4 Inviami prima il contratto individuale; poi potrai inviare i cedolini.\n\n"
         "Comandi utili: /profilo e /conferma"
     )
 
@@ -814,14 +869,14 @@ async def lifespan(app_instance):
 
 app = FastAPI(
     title="PagaCheck Backend",
-    version="1.5.0",
+    version="1.5.1",
     lifespan=lifespan,
 )
 
 
 @app.get("/health", response_class=PlainTextResponse)
 async def health():
-    return "PagaCheck OK â V1.5.0"
+    return "PagaCheck OK \u2014 V1.5.1"
 
 
 @app.get("/")
